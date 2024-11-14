@@ -22,19 +22,21 @@ export async function POST(req: NextRequest) {
     // Default voiceId if not provided
     const defaultVoice = ELEVENLABS_VOICES.find(
       (voice) => voice.name === "Jessica"
-    )?.name;
+    )?.id;
+
     const selectedVoice = voice || defaultVoice;
 
     const readable = new ReadableStream({
       async start(controller) {
         try {
-          const audioStream = await elevenlabs.generate({
-            stream: true,
-            voice: selectedVoice,
-            text: text,
-            model_id: "eleven_turbo_v2_5",
-            output_format: "mp3_44100_64",
-          });
+          const audioStream = await elevenlabs.textToSpeech.convertAsStream(
+            selectedVoice,
+            {
+              text: text,
+              model_id: "eleven_turbo_v2_5",
+              output_format: "mp3_44100_64",
+            }
+          );
 
           // Read the audio stream and enqueue chunks
           for await (const chunk of audioStream) {
