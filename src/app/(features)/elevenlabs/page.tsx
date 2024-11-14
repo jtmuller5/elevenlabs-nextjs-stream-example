@@ -4,130 +4,120 @@ import { useEffect, useRef, useState } from "react";
 export default function AudioStreamingPage() {
   const [isPlaying, setIsPlaying] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [progress, setProgress] = useState(0);
-  const audioContextRef = useRef<AudioContext | null>(null);
-  const sourceNodesRef = useRef<AudioBufferSourceNode[]>([]);
+  const [message, setMessage] = useState("This is an example message");
+  const audioRef = useRef<HTMLAudioElement | null>(null);
 
   const startAudioStream = async () => {
+    if (!message.trim()) {
+      setError("Please enter a message.");
+      return;
+    }
+
     try {
       setIsPlaying(true);
       setError(null);
-      setProgress(0);
 
-      // Initialize Web Audio API
-      if (!audioContextRef.current) {
-        audioContextRef.current = new (window.AudioContext ||
-          (window as any).webkitAudioContext)();
+      // Create a new AbortController to allow cancellation
+      const abortController = new AbortController();
+
+      const response = await fetch("/api/stream/tts", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ text: message }),
+        signal: abortController.signal,
+      });
+
+      if (!response.body) {
+        throw new Error("No response body");
       }
 
-      const response = await fetch("/api/stream/tts");
-      const reader = response.body?.getReader();
-
-      if (!reader) {
-        throw new Error("Failed to get stream reader");
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || "An error occurred");
       }
 
-      // Store chunks to combine them later
+      // Create a blob from the response stream
+      const contentType = response.headers.get("Content-Type") || "audio/mpeg";
+      const reader = response.body.getReader();
       const chunks: Uint8Array[] = [];
 
-      // Read stream
       while (true) {
         const { value, done } = await reader.read();
         if (done) break;
-
         chunks.push(value);
-
-        // Update progress (approximate since we don't know total size)
-        setProgress(chunks.length * 64 * 1024); // 64KB chunks
       }
 
-      // Combine all chunks into a single array
-      const combinedChunks = new Uint8Array(
-        chunks.reduce((acc, chunk) => acc + chunk.length, 0)
-      );
+      // Combine chunks into a single blob
+      const blob = new Blob(chunks, { type: contentType });
+      const audioUrl = URL.createObjectURL(blob);
 
-      let offset = 0;
-      chunks.forEach((chunk) => {
-        combinedChunks.set(chunk, offset);
-        offset += chunk.length;
-      });
+      // Play the audio
+      if (audioRef.current) {
+        audioRef.current.src = audioUrl;
+        audioRef.current.play();
+      }
 
-      // Decode audio data
-      const audioBuffer = await audioContextRef.current.decodeAudioData(
-        combinedChunks.buffer
-      );
-
-      // Create and start audio source
-      const source = audioContextRef.current.createBufferSource();
-      source.buffer = audioBuffer;
-      source.connect(audioContextRef.current.destination);
-      source.start(0);
-
-      // Store source node for cleanup
-      sourceNodesRef.current.push(source);
-
-      // Handle completion
-      source.onended = () => {
+      // Cleanup
+      audioRef.current?.addEventListener("ended", () => {
         setIsPlaying(false);
-        setProgress(0);
-      };
+        URL.revokeObjectURL(audioUrl);
+      });
     } catch (err) {
+      if ((err as any).name === "AbortError") {
+        // Fetch aborted
+        return;
+      }
       setError(err instanceof Error ? err.message : "An error occurred");
       setIsPlaying(false);
     }
   };
 
   const stopAudio = () => {
-    sourceNodesRef.current.forEach((source) => {
-      try {
-        source.stop();
-      } catch (e) {
-        // Ignore errors if source already stopped
-      }
-    });
-    sourceNodesRef.current = [];
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current.src = "";
+    }
     setIsPlaying(false);
-    setProgress(0);
   };
 
   // Cleanup on unmount
   useEffect(() => {
     return () => {
       stopAudio();
-      if (audioContextRef.current?.state !== "closed") {
-        audioContextRef.current?.close();
-      }
     };
   }, []);
 
   return (
     <main className="min-h-screen p-8 max-w-2xl mx-auto">
-      <h1 className="text-3xl font-bold mb-6">Audio Streaming Demo</h1>
+      <h1 className="text-3xl font-bold mb-6">Text-to-Speech Streaming Demo</h1>
 
       <div className="space-y-4">
+        <textarea
+          value={message}
+          onChange={(e) => setMessage(e.target.value)}
+          placeholder="Enter your message here..."
+          className="w-full p-2 border rounded"
+          rows={4}
+          disabled={isPlaying}
+        />
+
         <button
           onClick={isPlaying ? stopAudio : startAudioStream}
           className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 
                      disabled:bg-blue-300 disabled:cursor-not-allowed"
+          disabled={isPlaying && !message}
         >
           {isPlaying ? "Stop Audio" : "Play Audio"}
         </button>
-
-        {progress > 0 && (
-          <div className="w-full bg-gray-200 rounded-full h-2.5">
-            <div
-              className="bg-blue-600 h-2.5 rounded-full transition-all duration-300"
-              style={{
-                width: `${Math.min((progress / (1024 * 1024)) * 100, 100)}%`,
-              }}
-            />
-          </div>
-        )}
 
         {error && (
           <div className="p-4 bg-red-100 text-red-700 rounded">{error}</div>
         )}
       </div>
+
+      <audio ref={audioRef} hidden />
     </main>
   );
 }
