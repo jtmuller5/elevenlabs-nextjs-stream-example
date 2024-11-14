@@ -29,6 +29,14 @@ export async function POST(req: NextRequest) {
     const readable = new ReadableStream({
       async start(controller) {
         try {
+          /* elevenlabs.generate({
+            voice: selectedVoice,
+            text: text,
+            stream: true,
+            model_id: "eleven_turbo_v2_5",
+            output_format: "mp3_44100_64",
+          }); */
+          
           const audioStream = await elevenlabs.textToSpeech.convertAsStream(
             selectedVoice,
             {
